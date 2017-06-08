@@ -35,7 +35,8 @@ class account_history_plugin_impl
 
       account_history_plugin& _self;
       flat_map< account_name_type, account_name_type > _tracked_accounts;
-      bool                    _filter_content = false;
+      string                                           _filter_content = "none";
+      flat_set< string >                               _list;
 };
 
 account_history_plugin_impl::~account_history_plugin_impl()
@@ -98,7 +99,7 @@ struct operation_visitor
 
 struct operation_visitor_filter : operation_visitor {
    operation_visitor_filter( database& db, const operation_notification& note, const operation_object*& n, account_name_type i ):operation_visitor(db,note,n,i){}
-
+   /*
    void operator()( const comment_operation& )const {}
    void operator()( const vote_operation& )const {}
    void operator()( const delete_comment_operation& )const{}
@@ -159,10 +160,11 @@ struct operation_visitor_filter : operation_visitor {
    {
       operation_visitor::operator()( op );
    }
-
+   */
    void operator()( const escrow_approve_operation& op )const
    {
-      operation_visitor::operator()( op );
+      if(_list.find("escrow_approve_operation") != _list.end() && _filter_content=="whitelist")
+         operation_visitor::operator()( op );
    }
 
    template<typename Op>
@@ -206,7 +208,7 @@ void account_history_plugin_impl::on_operation( const operation_notification& no
       }
 
       if( !_tracked_accounts.size() || (itr != _tracked_accounts.end() && itr->first <= item && item <= itr->second ) ) {
-         if( _filter_content )
+         if( _filter_content != "none")
             note.op.visit( operation_visitor_filter(db, note, new_obj, item) );
          else
             note.op.visit( operation_visitor(db, note, new_obj, item) );
@@ -238,7 +240,8 @@ void account_history_plugin::plugin_set_program_options(
 {
    cli.add_options()
          ("track-account-range", boost::program_options::value<std::vector<std::string>>()->composing()->multitoken(), "Defines a range of accounts to track as a json pair [\"from\",\"to\"] [from,to] Can be specified multiple times")
-         ("filter-posting-ops", "Ignore posting operations, only track transfers and account updates")
+         ("history-whitelist-ops", boost::program_options::value<string>(), "Defines a list of operations which will be explicitly logged.")
+         ("history-blacklist-ops", boost::program_options::value<string>(), "Defines a list of operations which will be explicitly ignored.")
          ;
    cfg.add(cli);
 }
@@ -250,8 +253,14 @@ void account_history_plugin::plugin_initialize(const boost::program_options::var
 
    typedef pair<account_name_type,account_name_type> pairstring;
    LOAD_VALUE_SET(options, "track-account-range", my->_tracked_accounts, pairstring);
-   if( options.count( "filter-posting-ops" ) ) {
-      my->_filter_content = true;
+   if( options.count( "history-whitelist-ops" ) ) {
+      my->_filter_content = "whitelist";
+      const std::string& listed_ops = options[ "history-whitelist-ops" ].as< string >();
+      _my->_list = fc::json::from_string( listed_ops ).as< flat_set< string > >();
+   } else if( options.count( "history-blacklist-ops" ) ) {
+      my->_filter_content = "blacklist";
+      const std::string& listed_ops = options[ "history-blacklist-ops" ].as< string >();
+      _my->_list = fc::json::from_string( listed_ops ).as< flat_set< string > >();
    }
 }
 
